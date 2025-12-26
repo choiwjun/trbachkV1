@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import { calculateProfit, trackBannerClick } from '@/lib/api';
-import { CalcInput, CalculationLog } from '@/types';
+import { CalcInput, CalculationLog, CalculationResult } from '@/types';
 import { Button, InputGroup, Card, Badge } from '@/components/ui/LayoutComponents';
 import { WarningModal } from '@/components/WarningModal';
 import { ResultView } from '@/components/ResultView';
@@ -65,7 +65,69 @@ export default function CalculatorPage({ params }: { params: { platform: string 
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleShare = async () => {
+    if (!resultData) return;
+
+    const profitStr = new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(resultData.result.outcome.profit);
+    const url = `${window.location.origin}/result/${resultData.id}`;
+    // Fix: use margin_rate instead of marginRate, and format as percentage
+    const text = `[TrbaChk] ${params.platform.toUpperCase()} 예상 수익: ${profitStr} (수익률 ${(resultData.result.outcome.margin_rate * 100).toFixed(1)}%)`;
+
+    // 1. Try Native Web Share API
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'TrbaChk 리셀 수익 계산기',
+          text: text,
+          url: url
+        });
+        return false; // Did not fallback to copy
+      } catch (err) {
+        // Share cancelled or failed, fall through to clipboard
+        console.log('Share canceled');
+      }
+    }
+
+    // 2. Fallback to Clipboard
+    try {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      return true; // Signal that we copied to clipboard
+    } catch (err) {
+      alert('공유하기를 지원하지 않는 환경입니다.');
+      return false;
+    }
+  };
+
   if (resultData) {
+    // Adapter: CalcResult -> CalculationResult
+    const viewResult: CalculationResult = {
+      meta: {
+        exchangeRate: resultData.result.meta.fx_rate,
+        platform: resultData.platform,
+        timestamp: resultData.result.meta.timestamp,
+      },
+      breakdown: {
+        buyPriceKRW: resultData.result.breakdown.buy_price,
+        shippingKRW: resultData.result.breakdown.intl_shipping,
+        customsDuty: resultData.result.breakdown.customs_duty,
+        vat: resultData.result.breakdown.vat,
+        platformFee: resultData.result.breakdown.platform_fee,
+        platformShippingFee: resultData.result.breakdown.platform_shipping_fee,
+        totalCost: resultData.result.breakdown.total_cost,
+        grossRevenue: resultData.result.breakdown.gross_revenue,
+      },
+      outcome: {
+        profit: resultData.result.outcome.profit,
+        marginRate: resultData.result.outcome.margin_rate * 100, // Convert to percentage
+        isLoss: resultData.result.outcome.is_loss,
+        breakEvenPoint: resultData.result.outcome.break_even_price,
+      },
+      risk: {
+        taxWarning: resultData.result.warnings.length > 0,
+        taxWarningMessage: resultData.result.warnings[0],
+      },
+    };
+
     return (
       <div className="p-4 pt-8">
         <div className="mb-4 flex items-center justify-between">
@@ -74,16 +136,11 @@ export default function CalculatorPage({ params }: { params: { platform: string 
            </button>
            <span className="uppercase font-bold text-zinc-600">{params.platform}</span>
         </div>
-        {/* @ts-ignore - Temporary ignore until ResultView supports CalcResult or data is mapped */}
+        
         <ResultView 
-          result={resultData.result} 
+          result={viewResult} 
           onReset={handleReset}
-          onShare={() => {
-             // In real app, navigate to /result/[id] or copy link
-             const url = `${window.location.origin}/result/${resultData.id}`;
-             navigator.clipboard.writeText(url);
-             alert('Link copied to clipboard!');
-          }}
+          onShare={handleShare}
         />
         
         {/* Ad Banner Slot */}

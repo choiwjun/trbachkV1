@@ -1,5 +1,5 @@
 
-import { AdminSettings, FeeRule, TaxPolicy } from '../types';
+import { AdminSettings, FeeRule, TaxPolicy, Banner } from '../types';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 
@@ -43,4 +43,8 @@ export const updateFeeRule = async (rule: FeeRule) => {
 
 export const updateTaxPolicy = async (policy: TaxPolicy) => {
   return adminFetch('update-policy', { type: 'tax', data: policy });
+};
+
+export const updateBanners = async (banners: Banner[]) => {
+  return adminFetch('update-banners', { banners });
 };

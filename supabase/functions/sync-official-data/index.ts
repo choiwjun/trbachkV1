@@ -1,135 +1,97 @@
 
-// @ts-ignore
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-// @ts-ignore
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-// @ts-ignore
-import { XMLParser } from "https://esm.sh/fast-xml-parser@4.2.5"
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { XMLParser } from "https://esm.sh/fast-xml-parser@4.5.0";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+function json(status: number, body: any) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json; charset=utf-8" } });
+}
+
+function fmtYmd(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
+function requireBearer(req: Request) {
+  // @ts-ignore
+  const expected = Deno.env.get("EDGE_SYNC_BEARER") ?? "";
+  const auth = req.headers.get("authorization") ?? "";
+  if (!auth.toLowerCase().startsWith("bearer ")) throw new Error("UNAUTHORIZED");
+  const token = auth.slice(7).trim();
+  if (!expected || token !== expected) throw new Error("UNAUTHORIZED");
+}
+
+async function fetchKcsUsdKrw(): Promise<{ rate: number; base_time: string; raw: any }> {
+  // @ts-ignore
+  const serviceKey = Deno.env.get("KCS_SERVICE_KEY");
+  if (!serviceKey) throw new Error("Missing env: KCS_SERVICE_KEY");
+
+  const aplyBgnDt = fmtYmd(new Date());
+  const endpoint = "http://apis.data.go.kr/1220000/retrieveTrifFxrtInfo/getRetrieveTrifFxrtInfo";
+  const url = new URL(endpoint);
+  url.searchParams.set("serviceKey", serviceKey);
+  url.searchParams.set("aplyBgnDt", aplyBgnDt);
+  url.searchParams.set("weekFxrtTpcd", "2"); // 수입
+
+  const res = await fetch(url.toString(), { headers: { "Accept": "application/xml" } });
+  const xmlText = await res.text();
+  if (!res.ok) throw new Error(`KCS_HTTP_${res.status}: ${xmlText.slice(0, 200)}`);
+
+  const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: true, trimValues: true });
+  const raw = parser.parse(xmlText);
+  const items = raw?.response?.body?.items?.item ?? raw?.response?.body?.items ?? raw?.response?.body?.item;
+  if (!items) throw new Error("KCS_PARSE_NO_ITEMS");
+  const list = Array.isArray(items) ? items : [items];
+
+  const usd = list.find((x: any) => String(x.currSgn).toUpperCase() === "USD");
+  if (!usd) throw new Error("KCS_NO_USD_ROW");
+
+  const rate = Number(usd.fxrt);
+  if (!Number.isFinite(rate) || rate <= 0) throw new Error(`KCS_BAD_RATE: ${usd.fxrt}`);
+
+  const baseYmd = String(usd.aplyBgnDt || aplyBgnDt);
+  const base_time = `${baseYmd.slice(0, 4)}-${baseYmd.slice(4, 6)}-${baseYmd.slice(6, 8)}T00:00:00+09:00`;
+
+  return { rate, base_time, raw };
 }
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
   try {
-    // 1. Authentication (Custom Bearer Token)
-    const authHeader = req.headers.get('Authorization')
+    requireBearer(req);
+
     // @ts-ignore
-    const expectedToken = Deno.env.get('EDGE_SYNC_BEARER')
-    
-    if (!expectedToken || authHeader !== `Bearer ${expectedToken}`) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
-    }
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-    // 2. Initialize Supabase Client (Service Role for Admin Write Access)
-    // @ts-ignore
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
-    // @ts-ignore
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const fx = await fetchKcsUsdKrw();
 
-    // 3. Prepare Date (KST)
-    // Edge Functions run in UTC. We need KST (UTC+9) for the API parameter.
-    const now = new Date()
-    const kstOffset = 9 * 60 * 60 * 1000
-    const kstDate = new Date(now.getTime() + kstOffset)
-    
-    // Format YYYYMMDD for API
-    const yyyy = kstDate.toISOString().slice(0, 4)
-    const mm = kstDate.toISOString().slice(5, 7)
-    const dd = kstDate.toISOString().slice(8, 10)
-    const aplyBgnDt = `${yyyy}${mm}${dd}`
+    const { error: fxErr } = await supabase.from("fx_rates").upsert(
+      { base_currency: "USD", quote_currency: "KRW", rate: fx.rate, base_time: fx.base_time, source: "KCS", raw: fx.raw },
+      { onConflict: "base_currency,quote_currency,base_time" },
+    );
+    if (fxErr) throw new Error(`FX_UPSERT_FAILED: ${fxErr.message}`);
 
-    // 4. Call Korea Customs Service API
-    // @ts-ignore
-    const serviceKey = Deno.env.get('KCS_SERVICE_KEY')
-    // weekFxrtTpcd=2 means "Import" (수입)
-    const apiUrl = `http://apis.data.go.kr/1220000/retrieveTrifFxrtInfo/getRetrieveTrifFxrtInfo?serviceKey=${serviceKey}&aplyBgnDt=${aplyBgnDt}&weekFxrtTpcd=2`
+    // tax_policy daily check touch
+    const { data: activeTax, error: taxReadErr } = await supabase
+      .from("tax_policy")
+      .select("id")
+      .eq("policy_key", "kr_import")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (taxReadErr || !activeTax) throw new Error("TAX_POLICY_NOT_FOUND");
 
-    console.log(`Fetching from KCS: ${aplyBgnDt}`)
-    
-    const apiRes = await fetch(apiUrl)
-    if (!apiRes.ok) throw new Error(`KCS API Failed: ${apiRes.statusText}`)
-    
-    const xmlText = await apiRes.text()
-    
-    // 5. Parse XML
-    const parser = new XMLParser()
-    const jsonObj = parser.parse(xmlText)
-    
-    // Navigate XML structure: response -> body -> items -> item[]
-    const items = jsonObj?.response?.body?.items?.item
-    if (!items) {
-        console.error('API Response:', JSON.stringify(jsonObj))
-        throw new Error('Invalid API Response Structure')
-    }
+    const { error: taxTouchErr } = await supabase
+      .from("tax_policy")
+      .update({ source: "KCS_SITE", source_checked_at: new Date().toISOString() })
+      .eq("id", activeTax.id);
+    if (taxTouchErr) throw new Error(`TAX_TOUCH_FAILED: ${taxTouchErr.message}`);
 
-    // Handle single item vs array logic (fast-xml-parser behavior)
-    const itemList = Array.isArray(items) ? items : [items]
-    
-    // Find USD
-    const usdItem = itemList.find((i: any) => i.currSgn === 'USD')
-    if (!usdItem) throw new Error('USD rate not found in KCS response')
-
-    const rate = parseFloat(usdItem.fxrt)
-    
-    // 6. DB Operation: Upsert FX Rate
-    // Construct ISO string for KST 00:00:00 (e.g., 2023-10-25T00:00:00+09:00)
-    // Note: Supabase timestamptz will store this as UTC, which is correct.
-    const baseTimeISO = `${yyyy}-${mm}-${dd}T00:00:00+09:00`
-
-    const { error: upsertError } = await supabase
-      .from('fx_rates')
-      .upsert({
-        base_currency: 'USD',
-        quote_currency: 'KRW',
-        rate: rate,
-        base_time: baseTimeISO,
-        provider: 'customs_service'
-      }, {
-        onConflict: 'base_currency, quote_currency, base_time'
-      })
-
-    if (upsertError) throw new Error(`DB Upsert Failed: ${upsertError.message}`)
-
-    // 7. DB Operation: Update Tax Policy Check Timestamp
-    // Logic: Just 'touch' the active record to show we checked external sources.
-    // v1.1 TODO: If we implement automatic tax rule fetching, calculate hash of new rules
-    // and create a new version insert if changed, then toggle is_active.
-    const { error: taxError } = await supabase
-      .from('tax_policy')
-      .update({ source_checked_at: new Date().toISOString() })
-      .eq('is_active', true)
-
-    if (taxError) console.warn(`Tax Policy update warning: ${taxError.message}`)
-
-    return new Response(JSON.stringify({
-      ok: true,
-      fx_updated: {
-        rate: rate,
-        base_time: baseTimeISO,
-        provider: 'customs_service'
-      },
-      tax_checked_at: new Date().toISOString()
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
-
-  } catch (error) {
-    return new Response(JSON.stringify({
-      ok: false,
-      error: error.message
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return json(200, { ok: true, fx: { rate: fx.rate, base_time: fx.base_time }, tax_checked_at: new Date().toISOString() });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return json(msg === "UNAUTHORIZED" ? 401 : 400, { ok: false, error: msg });
   }
-})
+});

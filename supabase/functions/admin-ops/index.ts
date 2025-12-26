@@ -36,25 +36,26 @@ serve(async (req) => {
     let resultData = null;
 
     if (action === 'get-settings') {
-      // Fetch all relevant configs
-      const [settingsRes, rulesRes, taxRes] = await Promise.all([
+      // Fetch all relevant configs including Banners
+      const [settingsRes, rulesRes, taxRes, bannersRes] = await Promise.all([
         supabase.from('app_settings').select('*').single(),
         supabase.from('platform_fee_rules').select('*').eq('is_active', true),
-        supabase.from('tax_policy').select('*').eq('is_active', true).single()
+        supabase.from('tax_policy').select('*').eq('is_active', true).single(),
+        supabase.from('banners').select('*').order('variant')
       ]);
 
       resultData = {
         settings: settingsRes.data || { fx_mode: 'AUTO', manual_fx_rate: 1350, maintenance_mode: false },
         feeRules: rulesRes.data || [],
-        taxPolicy: taxRes.data
+        taxPolicy: taxRes.data,
+        banners: bannersRes.data || []
       };
 
     } else if (action === 'update-settings') {
       // Payload: { key: 'fx_mode', value: 'MANUAL' } etc.
-      // We assume app_settings is a single row or key-value store. Let's assume single row 'config' for MVP.
       const { data, error } = await supabase
         .from('app_settings')
-        .upsert({ id: 1, ...payload }) // Assuming ID 1 is the singleton config
+        .upsert({ id: 1, ...payload }) 
         .select()
         .single();
       
@@ -63,9 +64,7 @@ serve(async (req) => {
       await logAudit(supabase, 'UPDATE_SETTINGS', payload, ipAddress);
 
     } else if (action === 'update-policy') {
-      // Payload: { type: 'fee' | 'tax', data: ... }
       if (payload.type === 'fee') {
-        // Disable old rule for platform -> Insert new
         await supabase.from('platform_fee_rules')
           .update({ is_active: false })
           .eq('platform', payload.data.platform);
@@ -92,7 +91,7 @@ serve(async (req) => {
       await logAudit(supabase, 'UPDATE_POLICY', payload, ipAddress);
 
     } else if (action === 'update-banners') {
-       // Upsert banners
+       // Upsert banners (Batch)
        const { data, error } = await supabase
          .from('banners')
          .upsert(payload.banners)

@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { useState } from 'react';
 import { CalculationResult } from '../types';
 import { Card, Button, Badge } from './ui/LayoutComponents';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
@@ -6,13 +7,24 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 interface ResultViewProps {
   result: CalculationResult;
   onReset: () => void;
-  onShare: () => void;
+  onShare: () => Promise<boolean | void>; // Return true if copied to clipboard
 }
 
 const formatKRW = (num: number) => new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 }).format(num);
 
 export const ResultView: React.FC<ResultViewProps> = ({ result, onReset, onShare }) => {
   const { outcome, breakdown, meta } = result;
+  const [isCopied, setIsCopied] = useState(false);
+
+  const handleShareClick = async () => {
+    const copied = await onShare();
+    // If the handler returns true, it means it fell back to clipboard copy
+    if (copied) {
+      setIsCopied(true);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(20);
+      setTimeout(() => setIsCopied(false), 2000);
+    }
+  };
 
   // Pie Chart Data
   const data = [
@@ -101,8 +113,16 @@ export const ResultView: React.FC<ResultViewProps> = ({ result, onReset, onShare
 
       {/* Actions */}
       <div className="grid grid-cols-[1fr_auto] gap-4">
-        <Button onClick={onShare} variant="secondary">
-          <i className="ri-share-box-line mr-2 text-xl"></i> 공유하기
+        <Button 
+          onClick={handleShareClick} 
+          variant={isCopied ? 'primary' : 'secondary'}
+          className={isCopied ? '!bg-emerald-500 !text-white !border-emerald-500' : ''}
+        >
+          {isCopied ? (
+            <><i className="ri-check-line mr-2 text-xl"></i> Copied!</>
+          ) : (
+            <><i className="ri-share-box-line mr-2 text-xl"></i> 공유하기</>
+          )}
         </Button>
         <Button onClick={onReset} className="w-20 !px-0" variant="ghost">
           <i className="ri-refresh-line text-2xl"></i>
