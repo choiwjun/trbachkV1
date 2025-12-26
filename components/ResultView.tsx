@@ -14,6 +14,14 @@ const formatKRW = (num: number) => new Intl.NumberFormat('ko-KR', { style: 'curr
 export const ResultView: React.FC<ResultViewProps> = ({ result, onReset, onShare }) => {
   const { outcome, breakdown, meta } = result;
 
+  // Pie Chart Data
+  const data = [
+    { name: '상품원가', value: breakdown.buyPriceKRW, color: '#52525b' }, // zinc-600
+    { name: '관부가세', value: breakdown.customsDuty + breakdown.vat, color: '#f97316' }, // orange-500
+    { name: '수수료/배송', value: breakdown.platformFee + breakdown.platformShippingFee + breakdown.shippingKRW, color: '#ef4444' }, // red-500
+    { name: '순수익', value: outcome.profit > 0 ? outcome.profit : 0, color: '#10b981' }, // emerald-500
+  ].filter(item => item.value > 0);
+
   return (
     <div className="space-y-8 animate-fade-in pb-24">
       {/* Hero Result */}
@@ -36,10 +44,37 @@ export const ResultView: React.FC<ResultViewProps> = ({ result, onReset, onShare
         <div className={`absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r ${outcome.isLoss ? 'from-rose-500/50 to-transparent' : 'from-emerald-500/50 to-transparent'}`} />
       </Card>
 
-      {/* Breakdown List */}
+      {/* Breakdown Chart & List */}
       <div className="space-y-4">
         <h3 className="text-zinc-400 text-sm font-bold uppercase ml-1">상세 내역</h3>
         
+        {/* Simple Pie Chart Visualization */}
+        <div className="h-48 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={80}
+                paddingAngle={5}
+                dataKey="value"
+                stroke="none"
+              >
+                {data.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px' }}
+                itemStyle={{ color: '#fff' }}
+                formatter={(value: number) => formatKRW(value)}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <Card className="p-5 flex flex-col justify-between h-36">
              <span className="text-zinc-500 text-sm">총 매출</span>
