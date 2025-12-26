@@ -3,7 +3,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Badge, Card } from '@/components/ui/LayoutComponents';
+import { Card } from '@/components/ui/LayoutComponents';
 import { CalculationLog } from '@/types';
 
 const PLATFORMS = [
@@ -19,6 +19,7 @@ export default function HomePage() {
   useEffect(() => {
     const stored = localStorage.getItem('trbachk_history');
     if (stored) {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       setHistory(JSON.parse(stored).slice(0, 5));
     }
   }, []);
@@ -52,7 +53,7 @@ export default function HomePage() {
         <div className="flex justify-between items-center">
           <h2 className="text-zinc-400 font-bold uppercase text-xs tracking-widest">Recent Calculations</h2>
           {history.length > 0 && (
-            <button 
+            <button
               onClick={() => { localStorage.removeItem('trbachk_history'); setHistory([]); }}
               className="text-xs text-zinc-600 hover:text-white"
             >

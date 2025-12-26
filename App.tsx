@@ -18,9 +18,9 @@ const App: React.FC = () => {
       // In a real app: 
       // const response = await fetch('/functions/v1/calc', { method: 'POST', body: JSON.stringify(data) ... });
       const res = await calculateProfit(data);
-      
+
       setResult(res);
-      
+
       // Trigger warning modal if tax risk exists
       if (res.risk.taxWarning) {
         setShowWarning(true);
@@ -35,10 +35,10 @@ const App: React.FC = () => {
 
   const handleShare = async () => {
     if (!result) return;
-    
+
     // Simple text share for MVP
     const text = `[TrbaChk 리포트]\n순수익: ₩${result.outcome.profit.toLocaleString()}\n수익률: ${result.outcome.marginRate.toFixed(1)}%`;
-    
+
     if (navigator.share) {
       try {
         await navigator.share({
@@ -46,7 +46,7 @@ const App: React.FC = () => {
           text: text,
           url: window.location.href
         });
-      } catch (e) {
+      } catch {
         console.log('Share canceled');
       }
     } else {
@@ -66,7 +66,7 @@ const App: React.FC = () => {
           <h1 className="font-bold text-2xl tracking-tight">TrbaChk</h1>
         </div>
         <div className="flex gap-2">
-            <Badge variant="neutral">v1.0</Badge>
+          <Badge variant="neutral">v1.0</Badge>
         </div>
       </header>
 
@@ -75,21 +75,21 @@ const App: React.FC = () => {
         {!result ? (
           <CalculatorForm onSubmit={handleCalculate} isLoading={isLoading} />
         ) : (
-          <ResultView 
-            result={result} 
-            onReset={() => setResult(null)} 
+          <ResultView
+            result={result}
+            onReset={() => setResult(null)}
             onShare={handleShare}
           />
         )}
       </main>
 
       {/* Modals */}
-      <WarningModal 
-        isOpen={showWarning} 
-        onClose={() => setShowWarning(false)} 
+      <WarningModal
+        isOpen={showWarning}
+        onClose={() => setShowWarning(false)}
         message={result?.risk.taxWarningMessage}
       />
-      
+
       {/* Footer */}
       <footer className="fixed bottom-0 w-full text-center py-5 bg-zinc-950/80 backdrop-blur-md border-t border-zinc-900 text-zinc-500 text-xs uppercase tracking-widest pointer-events-none">
         <p>관세청 고시 환율 적용 (매일 09:00 갱신)</p>
