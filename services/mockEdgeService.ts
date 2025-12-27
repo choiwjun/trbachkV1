@@ -1,4 +1,5 @@
 import { CalculationRequest, CalculationResult, Platform } from '../types';
+import { fetchKCSExchangeRate } from './kcsService';
 
 /**
  * SIMULATION ONLY.
@@ -8,8 +9,15 @@ export const calculateProfit = async (req: CalculationRequest): Promise<Calculat
   // Simulate network delay for realistic UX (Optimistic UI testing)
   await new Promise(resolve => setTimeout(resolve, 600));
 
-  const MOCK_EXCHANGE_RATE = 1380.50; // Example KST rate
-  
+  // Try fetching real rate, fallback to mock if failed
+  let exchangeRate = 1380.50;
+  const realRate = await fetchKCSExchangeRate();
+  if (realRate) {
+    exchangeRate = realRate;
+  }
+
+  const MOCK_EXCHANGE_RATE = exchangeRate;
+
   // Platform Policies (Mocking DB)
   const policies: Record<Platform, { rate: number; fixed: number; shipping: number }> = {
     kream: { rate: 0.055, fixed: 0, shipping: 3000 },
@@ -25,7 +33,7 @@ export const calculateProfit = async (req: CalculationRequest): Promise<Calculat
 
   // Threshold Logic ($150)
   const isOverThreshold = totalBuyUSD > 150;
-  
+
   let customsDuty = 0;
   let vat = 0;
 

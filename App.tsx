@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CalculatorForm } from './components/CalculatorForm';
 import { ResultView } from './components/ResultView';
 import { WarningModal } from './components/WarningModal';
@@ -9,6 +9,7 @@ import { Badge } from './components/ui/LayoutComponents';
 const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<CalculationResult | null>(null);
+  const [lastRequest, setLastRequest] = useState<CalculationRequest | null>(null);
   const [showWarning, setShowWarning] = useState(false);
 
   // Core Logic Handler
@@ -19,6 +20,7 @@ const App: React.FC = () => {
       // const response = await fetch('/functions/v1/calc', { method: 'POST', body: JSON.stringify(data) ... });
       const res = await calculateProfit(data);
 
+      setLastRequest(data);
       setResult(res);
 
       // Trigger warning modal if tax risk exists
@@ -33,10 +35,55 @@ const App: React.FC = () => {
     }
   };
 
-  const handleShare = async () => {
-    if (!result) return;
+  // Load state from URL on mount (Share functionality)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p_platform = params.get('p');
+    const p_buy = params.get('b');
+    const p_sell = params.get('s');
 
-    // Simple text share for MVP
+    if (p_platform && p_buy && p_sell) {
+      const req: CalculationRequest = {
+        platform: p_platform as any,
+        buyPriceUSD: Number(p_buy),
+        sellPriceKRW: Number(p_sell),
+        shippingCostUSD: Number(params.get('sh') || 0),
+        quantity: 1, // Default to 1 for share
+      };
+      handleCalculate(req);
+    }
+  }, []);
+
+  // Load state from URL on mount (Share functionality)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p_platform = params.get('p');
+    const p_buy = params.get('b');
+    const p_sell = params.get('s');
+
+    if (p_platform && p_buy && p_sell) {
+      const req: CalculationRequest = {
+        platform: p_platform as any,
+        buyPriceUSD: Number(p_buy),
+        sellPriceKRW: Number(p_sell),
+        shippingCostUSD: Number(params.get('sh') || 0),
+        quantity: 1, // Default to 1 for share
+      };
+      handleCalculate(req);
+    }
+  }, []);
+
+  const handleShare = async () => {
+    if (!result || !lastRequest) return;
+
+    // Generate Share URL with Query Params
+    const url = new URL(window.location.origin);
+    url.searchParams.set('p', lastRequest.platform);
+    url.searchParams.set('b', lastRequest.buyPriceUSD.toString());
+    url.searchParams.set('s', lastRequest.sellPriceKRW.toString());
+    if (lastRequest.shippingCostUSD) url.searchParams.set('sh', lastRequest.shippingCostUSD.toString());
+
+    const shareUrl = url.toString();
     const text = `[TrbaChk 리포트]\n순수익: ₩${result.outcome.profit.toLocaleString()}\n수익률: ${result.outcome.marginRate.toFixed(1)}%`;
 
     if (navigator.share) {
@@ -44,14 +91,14 @@ const App: React.FC = () => {
         await navigator.share({
           title: 'TrbaChk 수익 리포트',
           text: text,
-          url: window.location.href
+          url: shareUrl
         });
       } catch {
         console.log('Share canceled');
       }
     } else {
-      await navigator.clipboard.writeText(text);
-      alert('결과가 클립보드에 복사되었습니다!');
+      await navigator.clipboard.writeText(`${text}\n${shareUrl}`);
+      alert('공유 링크가 클립보드에 복사되었습니다!');
     }
   };
 
